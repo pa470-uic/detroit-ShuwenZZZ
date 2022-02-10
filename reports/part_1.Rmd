@@ -13,51 +13,225 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
 library(tidyverse)
 library(lubridate)
 library(RSQLite)
+library(VIM)
+library(Amelia)
+library(scales)
+library(ggplot2)
 ```
 
 Template file. Code will be included in folded blocks in the output to facilitate grading. Please knit this file and commit both the rmd and the html output. If you add external files to your analysis, please commit them to the files folder in this repository. NOTE: please do not commit large (15MB+) files to GitHub. Instead please denote the origin of the files in your code. 
 
 ```{r}
 #example connection to database. note that you have to download the database from onedrive
-setwd("~/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/Detroit Project/PA470_Detroit_Project/detroit-ShuwenZZZ")
-con <- DBI::dbConnect(RSQLite::SQLite(), "/Users/shuwenzhang/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/Detroit Project/PA470_Detroit_Project/detroit-ShuwenZZZ/database/detroit.sqlite")
+setwd("~/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/PA470_Detroit_Project/detroit-ShuwenZZZ")
+con <- DBI::dbConnect(RSQLite::SQLite(), "/Users/shuwenzhang/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/PA470_Detroit_Project/detroit-ShuwenZZZ/database/detroit.sqlite")
 
-# sales tbl
-
+# data
 dplyr::tbl(con, 'sales')
+dplyr::tbl(con, 'blight')
+dplyr::tbl(con, 'parcels')
+dplyr::tbl(con, 'parcels_historic')
+dplyr::tbl(con, 'foreclosures')
+dplyr::tbl(con, 'assessments')
 
-# convert to tibble and save it as con1
-con1<-dplyr::tbl(con, 'sales') %>% dplyr::collect()
-
-# sql query
-
-dplyr::tbl(con, 'sales') %>% count(year(sale_date))
-
-#dplyr::tbl(con, 'sales') %>% count(year(sale_date)) %>% show_query()
+# convert to tibble and save it as con_XXX for different subset
+con_sales<-dplyr::tbl(con, 'sales') %>% dplyr::collect()
+con_blight<-dplyr::tbl(con, 'blight') %>% dplyr::collect()
+con_parcels<-dplyr::tbl(con, 'parcels') %>% dplyr::collect()
+con_parcels_historic<-dplyr::tbl(con, 'parcels_historic') %>% dplyr::collect()
+con_foreclosures<-dplyr::tbl(con, 'foreclosures') %>% dplyr::collect()
+con_assessments<-dplyr::tbl(con, 'assessments') %>% dplyr::collect()
 
 ```
+
 Section A: Conduct an exploratory data analysis of homes in Detroit. Offer an overview of relevant trends in the data and data quality issues. Contextualize your analysis with key literature on properties in Detroit.
 
+1. Sales Data
 ```{r}
-
 # Set the date data
-con1$sale_date <- con1 %>% dplyr::mutate(sale_date=ymd(sale_date))
+con_sales<- con_sales %>% dplyr::mutate(sale_date=ymd(sale_date))
+# Get the sale year var
+con_sales$sale_year <- year(con_sales$sale_date)
+# Descriptive statistics
+summary(con_sales)
+# Check NAs
+length(which(is.na(con_sales)))
+missmap(con_sales, main = "Missing Values", col = c("red", "snow2"))
+# Check the correlation
+con_sales %>%
+  select(sale_price,property_c,sale_year) %>%
+  corrr::correlate() %>%
+  corrr::rearrange() %>%
+  corrr::shave() %>%
+  corrr::fashion()
+# 
+```
 
+```{r}
+# check the total number of sales by month
+plotdata1 <- con_sales %>% 
+  group_by(date = floor_date(`sale_date`, 'month')) %>%
+  summarize(count = n())
 
+ggplot(plotdata1, aes(x=as.POSIXct(date), y=count)) +
+  geom_line()+
+  geom_point()+
+  scale_x_datetime(date_breaks = '1 year',date_labels='%y/%m/%d') +
+  labs(x='Date', 
+       y='Sales', 
+       title='Nomber of Sales in Detroit')
+```
+```{r}
+# check the average sale price by month
+plotdata2 <- con_sales %>% 
+  group_by(date = floor_date(`sale_date`, 'month')) %>%
+  summarize(aveSalePrice_month = mean(sale_price))
+
+ggplot(plotdata2, aes(x=as.POSIXct(date), y=aveSalePrice_month)) +
+  geom_line()+
+  geom_point()+
+  scale_x_datetime(date_breaks = '1 year',date_labels='%y/%m/%d') +
+  labs(x='Date', 
+       y='Average sale Price by Month', 
+       title='Average sale Price by Month')
+```
+2. Blight Violation Notices Data
+```{r}
+glimpse(con_blight)
+con_blight<-con_blight%>%
+  dplyr::select(parcelno,violation_date,violation_code,state,city)%>%
+  dplyr::filter(city=="Det"&state=="MI")
+
+# Get the sale year var
+con_blight$year <- year(con_blight$violation_date)
+
+summary(con_blight)
+# Check NAs
+length(which(is.na(con_blight)))
+missmap(con_blight, main = "Missing Values", col = c("red", "snow2"))
+# violation per parcel
+parcel_blight<-con_blight %>%
+  dplyr::group_by(parcelno,year)%>%
+  count()
 ```
 
 Section B: Use cmfproperty to conduct a sales ratio study across the relevant time period. Note that cmfproperty is designed to produce Rmarkdown reports but use the documentation and insert relevant graphs/figures into your report. Look to make this reproducible since you’ll need these methods to analyze your assessment model later on. Detroit has many sales which are not arm’s length (sold at fair market value) so some sales should be excluded, but which ones?
 
+3. Parcel Data
+
 ```{r}
+glimpse(con_parcels)
+con_parcels<-con_parcels%>%
+  dplyr::select(parcel_number,total_square_footage, total_floor_area, style, property_class_desc, year_built, sale_price, sale_date, assessed_value, taxable_value, SHAPE_Length, SHAPE_Area, X, Y)
+summary(con_parcels)
+
+#Create Sale Year !!! The date var is weird !!!
+con_parcels<- con_parcels %>% dplyr::mutate(sale_date=ymd_hms(sale_date))
+#con_parcels$sale_year <- year(con_parcels$sale_date)
+
+# Check NAs
+length(which(is.na(con_parcels)))
+missmap(con_parcels, main = "Missing Values", col = c("red", "snow2"))
+
+# Check correlations
+con_parcels %>%
+  select(sale_price,total_square_footage, total_floor_area, year_built, sale_price, assessed_value, taxable_value) %>%
+  corrr::correlate() %>%
+  corrr::rearrange() %>%
+  corrr::shave() %>%
+  corrr::fashion()
+```
+3. Foreclosures Data
+
+```{r}
+glimpse(con_foreclosures)
+con_foreclosures<-con_foreclosures%>%
+  dplyr::select(-prop_addr)
+summary(con_foreclosures)
+
+# Total number of foreclosures by year
+con_foreclosures%>%
+   dplyr::select(-prop_parcelnum)%>%
+   colSums(!is.na(con_foreclosures))
+```
+
+4. Assessments Data
+
+```{r}
+glimpse(con_assessments)
+
+summary(con_assessments)
+
+# Check NAs
+length(which(is.na(con_assessments)))
+```
+
+
+```{r}
+# Merge Sales data with assessment data.
+Sale_Assessments <- merge(con_sales, con_assessments, by.x=c("parcel_num", "sale_year"), by.y=c("PARCELNO", "year"), all.x=TRUE)  
+glimpse(Sale_Assessments)
 # Use cmfproperty
 #install.packages("devtools")
 devtools::install_github("cmf-uchicago/cmfproperty")
 library(cmfproperty)
 
+#df <- cmfproperty::con_assessments
+
+ratios <-
+  cmfproperty::reformat_data(
+    Sale_Assessments,
+    sale_col = "sale_price",
+    assessment_col = "ASSESSEDVALUE",
+    sale_year_col = "sale_year",
+  )
+# The following code takes forever on my laptop
+#cmfproperty::make_report(ratios, 
+#                         jurisdiction_name = "Detroit",
+#                        output_dir = "/Users/shuwenzhang/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/PA470_Detroit_Project/detroit-ShuwenZZZ") 
+
+
+#output_dir is the directory in which report is saved; default is working directory
 
 ```
 
+Section C: Explore trends and relationships with property sales using simple regressions
 
+```{r}
+# Merge data.
+Sale_Merged <- merge(Sale_Assessments, parcel_blight, by.x=c("parcel_num", "sale_year"), by.y=c("parcelno", "year"), all.x=TRUE)  
+glimpse(Sale_Merged)
+table(Sale_Merged$n)
+# Find out that there is no match observations by parcel number and year
+# So, keep use the Sale_Assessments
+# Create the simple regression model
+Model_Sale<-lm(sale_price~ASSESSEDVALUE+ as.factor(propclass)+sale_year, data=Sale_Assessments)
+summary(Model_Sale)
+
+# plot function
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                     "Intercept =",signif(fit$coef[[1]],5 ),
+                     " Slope =",signif(fit$coef[[2]], 5),
+                     " P =",signif(summary(fit)$coef[2,4], 5)))
+}
+ggplotRegression(Model_Sale)
+
+# Definitely not a good model!
+```
+
+Section D: Explore trends and relationships with foreclosures using simple regressions
+
+```{r}
+
+
+```
 
 
 
