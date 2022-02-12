@@ -1,0 +1,391 @@
+---
+title: "Part 1"
+author: "Shuwen Zhang"
+output: 
+  html_document:
+    df_print: paged
+    theme: sandstone
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+library(tidyverse)
+library(lubridate)
+library(RSQLite)
+library(VIM)
+library(Amelia)
+library(scales)
+library(ggplot2)
+```
+
+Template file. Code will be included in folded blocks in the output to facilitate grading. Please knit this file and commit both the rmd and the html output. If you add external files to your analysis, please commit them to the files folder in this repository. NOTE: please do not commit large (15MB+) files to GitHub. Instead please denote the origin of the files in your code. 
+
+```{r}
+#example connection to database. note that you have to download the database from onedrive
+setwd("~/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/PA470_Detroit_Project/detroit-ShuwenZZZ")
+con <- DBI::dbConnect(RSQLite::SQLite(), "/Users/shuwenzhang/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/PA470_Detroit_Project/detroit-ShuwenZZZ/database/detroit.sqlite")
+
+# convert to tibble and save it as con_XXX for different subset
+con_sales<-dplyr::tbl(con, 'sales') %>% dplyr::collect()
+con_blight<-dplyr::tbl(con, 'blight') %>% dplyr::collect()
+con_parcels<-dplyr::tbl(con, 'parcels') %>% dplyr::collect()
+con_parcels_historic<-dplyr::tbl(con, 'parcels_historic') %>% dplyr::collect()
+con_foreclosures<-dplyr::tbl(con, 'foreclosures') %>% dplyr::collect()
+con_assessments<-dplyr::tbl(con, 'assessments') %>% dplyr::collect()
+
+```
+
+Section A: Conduct an exploratory data analysis of homes in Detroit. Offer an overview of relevant trends in the data and data quality issues. Contextualize your analysis with key literature on properties in Detroit.
+
+1. Sales Data
+```{r}
+# Set the date data
+con_sales<- con_sales %>% dplyr::mutate(sale_date=ymd(sale_date))
+# Get the sale year var
+con_sales$sale_year <- year(con_sales$sale_date)
+# Descriptive statistics
+summary(con_sales)
+# Check NAs
+length(which(is.na(con_sales)))
+missmap(con_sales, main = "Missing Values", col = c("red", "snow2"))
+# Check the correlation
+con_sales %>%
+  select(sale_price,property_c,sale_year) %>%
+  corrr::correlate() %>%
+  corrr::rearrange() %>%
+  corrr::shave() %>%
+  corrr::fashion()
+# 
+```
+Check the total number of sales by month
+```{r}
+# check the total number of sales by month
+plotdata1 <- con_sales %>% 
+  group_by(date = floor_date(`sale_date`, 'month')) %>%
+  summarize(count = n())
+
+ggplot(plotdata1, aes(x=as.POSIXct(date), y=count)) +
+  geom_line()+
+  geom_point()+
+  scale_x_datetime(date_breaks = '1 year',date_labels='%y/%m/%d') +
+  labs(x='Date', 
+       y='Sales', 
+       title='Nomber of Sales in Detroit')
+```
+Check the average sale price by month
+```{r}
+# check the average sale price by month
+plotdata2 <- con_sales %>% 
+  group_by(date = floor_date(`sale_date`, 'month')) %>%
+  summarize(aveSalePrice_month = mean(sale_price))
+
+ggplot(plotdata2, aes(x=as.POSIXct(date), y=aveSalePrice_month)) +
+  geom_line()+
+  geom_point()+
+  scale_x_datetime(date_breaks = '1 year',date_labels='%y/%m/%d') +
+  labs(x='Date', 
+       y='Average sale Price by Month', 
+       title='Average sale Price by Month')
+```
+2. Blight Violation Notices Data
+```{r}
+glimpse(con_blight)
+con_blight<-con_blight%>%
+  dplyr::select(parcelno,violation_date,violation_code,state,city)%>%
+  dplyr::filter(city=="Det"&state=="MI")
+
+# Get the sale year var
+con_blight$year <- year(con_blight$violation_date)
+
+summary(con_blight)
+# Check NAs
+length(which(is.na(con_blight)))
+missmap(con_blight, main = "Missing Values", col = c("red", "snow2"))
+# violation per parcel
+parcel_blight<-con_blight %>%
+  dplyr::group_by(parcelno,year)%>%
+  count()
+```
+Plot violation by year
+```{r}
+# Plot violation by year
+plotdata3<-con_blight %>%
+  dplyr::group_by(year)%>%
+  count()
+ggplot(plotdata3, aes(x=year, y=n)) +
+  geom_line()+
+  geom_point()+
+  labs(x='Year', 
+       y='total violation', 
+       title='total violation by year')
+
+```
+
+3. Parcel Data
+
+```{r}
+glimpse(con_parcels)
+con_parcels<-con_parcels%>%
+  dplyr::select(parcel_number,total_square_footage, total_floor_area, style, property_class_desc, year_built, sale_price, sale_date, assessed_value, taxable_value, SHAPE_Length, SHAPE_Area, X, Y)
+summary(con_parcels)
+
+#Create Sale Year !!! The date var is weird !!!
+library(datetime)
+con_parcels$sale_date<- as.date(con_parcels$sale_date)
+con_parcels<- con_parcels %>% dplyr::mutate(sale_year=year(ymd(sale_date)))
+
+# Check NAs
+length(which(is.na(con_parcels)))
+missmap(con_parcels, main = "Missing Values", col = c("red", "snow2"))
+
+# Check correlations
+con_parcels %>%
+  select(sale_price,total_square_footage, total_floor_area, year_built, sale_price, assessed_value, taxable_value,sale_year) %>%
+  corrr::correlate() %>%
+  corrr::rearrange() %>%
+  corrr::shave() %>%
+  corrr::fashion()
+```
+
+3. Foreclosures Data
+
+```{r}
+glimpse(con_foreclosures)
+
+#Check duplicated parcel number
+parelnum_duplicate <- unique(con_foreclosures$prop_parcelnum[!(!duplicated(con_foreclosures$prop_parcelnum) & 
+                                                                 rev(!duplicated(rev(con_foreclosures$prop_parcelnum))))])
+
+#Find nine group of duplicated parcel numbers. 
+#decide to drop them for now
+con_foreclosures <- con_foreclosures %>%
+  dplyr::select(-prop_addr)%>%
+  filter(!prop_parcelnum %in% parelnum_duplicate)
+
+#Convert to panel data
+con_foreclosures[is.na(con_foreclosures)] <- 0
+
+con_foreclosures <- data.frame('prop_parcelnum' = rep(con_foreclosures$prop_parcelnum, 
+                                                      each = dim(con_foreclosures)[2]-1), 
+                               'year' = rep(c(2002:2019), times = dim(con_foreclosures)[1]), 
+                               'foreclosure' = as.numeric(as.matrix(t(con_foreclosures[, -1]))))
+```
+Plot total foreclosures by year
+```{r}
+# Plot total foreclosures by year
+plotdata4<-con_foreclosures%>%
+  dplyr::group_by(year)%>%
+  summarize(total_year = sum(foreclosure))
+
+ggplot(plotdata4, aes(x=year, y=total_year)) +
+  geom_line()+
+  geom_point()+
+  labs(x='Year', 
+       y='total foreclosures', 
+       title='total foreclosures by year')
+
+```
+
+4. Assessments Data
+
+```{r}
+glimpse(con_assessments)
+
+summary(con_assessments)
+
+# Check NAs
+length(which(is.na(con_assessments)))
+# 0 NA
+```
+Plot average assessed value by year
+```{r}
+# Plot average assessed value by year
+plotdata5<-con_assessments%>%
+  dplyr::group_by(year)%>%
+  summarize(average_assessed_value = mean(ASSESSEDVALUE))
+
+ggplot(plotdata5, aes(x=year, y=average_assessed_value)) +
+  geom_line()+
+  geom_point()+
+  labs(x='Year', 
+       y='Average assessed value', 
+       title='Average assessed value by year')
+```
+Section B: Use cmfproperty to conduct a sales ratio study across the relevant time period. Note that cmfproperty is designed to produce Rmarkdown reports but use the documentation and insert relevant graphs/figures into your report. Look to make this reproducible since you’ll need these methods to analyze your assessment model later on. Detroit has many sales which are not arm’s length (sold at fair market value) so some sales should be excluded, but which ones?
+
+```{r}
+# Merge Sales data with assessment data.
+Sale_Assessments <- merge(con_sales, con_assessments, by.x=c("parcel_num", "sale_year"), by.y=c("PARCELNO", "year"), all.x=TRUE)  
+
+# Use cmfproperty
+#install.packages("devtools")
+#devtools::install_github("cmf-uchicago/cmfproperty")
+library(cmfproperty)
+
+#df <- cmfproperty::con_assessments
+
+ratios <-
+  cmfproperty::reformat_data(
+    Sale_Assessments,
+    sale_col = "sale_price",
+    assessment_col = "ASSESSEDVALUE",
+    sale_year_col = "sale_year",
+  )
+# The following code takes forever on my laptop
+#cmfproperty::make_report(ratios, 
+#                         jurisdiction_name = "Detroit",
+#                        output_dir = "/Users/shuwenzhang/Library/Group Containers/UBF8T346G9.OneDriveSyncClientSuite/OneDrive - University of Illinois at Chicago.noindex/OneDrive - University of Illinois at Chicago/UIC semesters/2022 Spring/PA470 AI & Machine Learning/PA470_Detroit_Project/detroit-ShuwenZZZ") 
+
+
+#output_dir is the directory in which report is saved; default is working directory
+
+```
+
+Create the master dataset for regression
+Merge data and check correlations
+```{r}
+# Merge data.
+Sale_Merged <- merge(Sale_Assessments, con_foreclosures, by.x=c("parcel_num", "sale_year"), by.y=c("prop_parcelnum", "year"), all.x=TRUE)  
+table(Sale_Merged$sale_year) #2011~2020
+table(con_foreclosures$year) #2002~2019
+Sale_Merged$foreclosure[is.na(Sale_Merged$foreclosure)] <- 0
+
+Sale_Merged <- merge(Sale_Merged, con_parcels, by.x=c("parcel_num", "sale_year"), by.y=c("parcel_number", "sale_year"), all.x=TRUE)  
+Sale_Merged<-Sale_Merged%>%
+  dplyr::select(-c(sale_date.y,sale_price.y))
+```
+Check correlations
+```{r}
+# Check correlations
+glimpse(Sale_Merged)
+Sale_Merged_Cor<-Sale_Merged %>%
+  dplyr::select(sale_year,sale_price.x,ASSESSEDVALUE,TAXABLEVALUE,total_square_footage,total_floor_area)
+rs <- cor(Sale_Merged_Cor, use = "pairwise.complete.obs")
+rs
+```
+Plot the gap between sale price and assessed value by year
+```{r}
+# Plot the gap between sale price and assessed value by year
+Sale_Merged_Gap<-Sale_Merged %>%
+  dplyr::select(parcel_num,sale_year,sale_price.x,ASSESSEDVALUE)
+Sale_Merged_Gap$Gap<-Sale_Merged_Gap$sale_price.x-Sale_Merged_Gap$ASSESSEDVALUE
+
+plotdata6<-Sale_Merged_Gap%>%
+  dplyr::group_by(sale_year)%>%
+  summarize(average_gap = mean(Gap,na.rm=T),average_saleprice = mean(sale_price.x,na.rm=T))
+
+ggplot(plotdata6, aes(x=sale_year, y=average_gap)) +
+  geom_line()+
+  geom_point()+
+  labs(x='Year', 
+       y='Average gap between sale price and assessed value', 
+       title='Average gap between sale price and assessed value by year')
+```
+Plot the gap between sale price and assessed value by sale price
+```{r}
+# Plot the gap between sale price and assessed value by sale price
+ggplot(plotdata6, aes(x=average_saleprice, y=average_gap)) +
+  geom_line()+
+  geom_point()+
+  labs(x='Average sale price', 
+       y='Average gap between sale price and assessed value', 
+       title='Average gap between sale price and assessed value by sale price')
+```
+
+Section C: Explore trends and relationships with property sales using simple regressions
+Create a simple regression model including all possible parameters
+```{r}
+# Create a simple regression model including all possible parameters
+glimpse(Sale_Merged)
+Model_Sale_1<-lm(sale_price.x~ASSESSEDVALUE+as.factor(propclass)+sale_year
+                 +TAXABLEVALUE+foreclosure+total_square_footage+total_floor_area
+                 +style+year_built,
+                 data=Sale_Merged)
+summary(Model_Sale_1)
+
+# plot function
+ggplotRegression <- function (fit) {
+
+require(ggplot2)
+
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                     "Intercept =",signif(fit$coef[[1]],5 ),
+                     " Slope =",signif(fit$coef[[2]], 5),
+                     " P =",signif(summary(fit)$coef[2,4], 5)))
+}
+
+#Plot Model_Sale_1
+ggplotRegression(Model_Sale_1)
+# Definitely not a good model!
+```
+Create a simple regression model including all numeric possible parameters
+```{r}
+# Create a simple regression model including all numeric possible parameters
+Model_Sale_2<-lm(sale_price.x~ASSESSEDVALUE+sale_year+TAXABLEVALUE+foreclosure+total_square_footage+total_floor_area+year_built,
+                 data=Sale_Merged)
+summary(Model_Sale_2)
+# R-squared is not good
+ggplotRegression(Model_Sale_2)
+```
+Create a simple regression model including parameters with significant result
+```{r}
+# Create a simple regression model including parameters with significant result
+Model_Sale_3<-lm(sale_price.x~ASSESSEDVALUE+as.factor(propclass)+sale_year
+                 +TAXABLEVALUE+foreclosure+total_square_footage+total_floor_area,
+                 data=Sale_Merged)
+summary(Model_Sale_3)
+# Again, R-squared is not good
+ggplotRegression(Model_Sale_3)
+```
+Drop outlier and create a simple regression model including parameters with significant result
+```{r}
+# Drop outlier
+Sale_Merged<-Sale_Merged%>%
+  dplyr::filter(sale_price.x<4e+06)
+
+Model_Sale_4<-lm(sale_price.x~ASSESSEDVALUE+as.factor(propclass)+sale_year
+                 +TAXABLEVALUE+foreclosure+total_square_footage+total_floor_area,
+                 data=Sale_Merged)
+summary(Model_Sale_4)
+ggplotRegression(Model_Sale_4)
+```
+
+Section D: Explore trends and relationships with foreclosures using simple regressions
+Create a simple linear regression model including all possible parameters
+```{r}
+Model_Foreclosure_1<-lm(foreclosure~sale_price.x+ASSESSEDVALUE+as.factor(propclass)+sale_year
+                 +TAXABLEVALUE+total_square_footage+total_floor_area
+                 +style+year_built,
+                 data=Sale_Merged)
+summary(Model_Foreclosure_1)
+ggplotRegression(Model_Foreclosure_1)
+# Linear regression is not suitable
+```
+Linear regression is not suitable
+
+Change to logistic regression with all possible parameters
+```{r}
+# change to logistic regression with all possible parameters
+Model_Foreclosure_2<-glm(foreclosure~sale_price.x+ASSESSEDVALUE+as.factor(propclass)+sale_year
+                 +TAXABLEVALUE+total_square_footage+total_floor_area
+                 +style+year_built,
+                 data=Sale_Merged, family = "binomial")
+summary(Model_Foreclosure_2)
+```
+Create a logistic regression with significant parameters
+```{r}
+# Create a logistic regression with significant parameters
+Model_Foreclosure_3<-glm(foreclosure~sale_price.x+ASSESSEDVALUE+sale_year
+                 +TAXABLEVALUE,
+                 data=Sale_Merged, family = "binomial")
+summary(Model_Foreclosure_3)
+
+```
+Question:How to make plot for GLM including multiple parameters?
+
+
+
+
