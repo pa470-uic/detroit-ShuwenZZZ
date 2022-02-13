@@ -304,21 +304,21 @@ Model_Sale_1<-lm(sale_price.x~ASSESSEDVALUE+as.factor(propclass)+sale_year
 summary(Model_Sale_1)
 
 # plot function
-ggplotRegression <- function (fit) {
+ggplotRegression <- function (fit, n) {
 
 require(ggplot2)
 
-ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+ggplot(fit$model, aes_string(x = names(fit$model)[n], y = names(fit$model)[1])) + 
   geom_point() +
   stat_smooth(method = "lm", col = "red") +
   labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
                      "Intercept =",signif(fit$coef[[1]],5 ),
-                     " Slope =",signif(fit$coef[[2]], 5),
-                     " P =",signif(summary(fit)$coef[2,4], 5)))
+                     " Slope =",signif(fit$coef[[n]], 5),
+                     " P-value =",signif(summary(fit)$coef[n,4], 5)))
 }
 
 #Plot Model_Sale_1
-ggplotRegression(Model_Sale_1)
+ggplotRegression(Model_Sale_1,2)
 # Definitely not a good model!
 ```
 Create a simple regression model including all numeric possible parameters
@@ -328,7 +328,7 @@ Model_Sale_2<-lm(sale_price.x~ASSESSEDVALUE+sale_year+TAXABLEVALUE+foreclosure+t
                  data=Sale_Merged)
 summary(Model_Sale_2)
 # R-squared is not good
-ggplotRegression(Model_Sale_2)
+ggplotRegression(Model_Sale_2,2)
 ```
 Create a simple regression model including parameters with significant result
 ```{r}
@@ -338,7 +338,7 @@ Model_Sale_3<-lm(sale_price.x~ASSESSEDVALUE+as.factor(propclass)+sale_year
                  data=Sale_Merged)
 summary(Model_Sale_3)
 # Again, R-squared is not good
-ggplotRegression(Model_Sale_3)
+ggplotRegression(Model_Sale_3,2)
 ```
 Drop outlier and create a simple regression model including parameters with significant result
 ```{r}
@@ -350,7 +350,7 @@ Model_Sale_4<-lm(sale_price.x~ASSESSEDVALUE+as.factor(propclass)+sale_year
                  +TAXABLEVALUE+foreclosure+total_square_footage+total_floor_area,
                  data=Sale_Merged)
 summary(Model_Sale_4)
-ggplotRegression(Model_Sale_4)
+ggplotRegression(Model_Sale_4,2)
 ```
 
 Section D: Explore trends and relationships with foreclosures using simple regressions
@@ -361,7 +361,7 @@ Model_Foreclosure_1<-lm(foreclosure~sale_price.x+ASSESSEDVALUE+as.factor(propcla
                  +style+year_built,
                  data=Sale_Merged)
 summary(Model_Foreclosure_1)
-ggplotRegression(Model_Foreclosure_1)
+ggplotRegression(Model_Foreclosure_1,2)
 # Linear regression is not suitable
 ```
 Linear regression is not suitable
@@ -384,8 +384,65 @@ Model_Foreclosure_3<-glm(foreclosure~sale_price.x+ASSESSEDVALUE+sale_year
 summary(Model_Foreclosure_3)
 
 ```
-Question:How to make plot for GLM including multiple parameters?
+Plot Model_Foreclosure_3
+```{r}
+newdata <- data.frame('sale_price.x' = seq(min(Sale_Merged$sale_price.x, na.rm = TRUE), 
+                                         max(Sale_Merged$sale_price.x, na.rm = TRUE), 
+                                         len = 500), 
+                      'ASSESSEDVALUE' = seq(min(Sale_Merged$ASSESSEDVALUE, na.rm = TRUE), 
+                                         max(Sale_Merged$ASSESSEDVALUE, na.rm = TRUE), 
+                                         len = 500), 
+                      'sale_year' = seq(min(Sale_Merged$sale_year, na.rm = TRUE), 
+                                         max(Sale_Merged$sale_year, na.rm = TRUE), 
+                                         len = 500), 
+                      'TAXABLEVALUE' = seq(min(Sale_Merged$TAXABLEVALUE, na.rm = TRUE), 
+                                         max(Sale_Merged$TAXABLEVALUE, na.rm = TRUE), 
+                                         len = 500))
+newdata$foreclosure <- predict(Model_Foreclosure_3, newdata, type = 'response')
 
+ggplot(newdata, aes(y = foreclosure)) + 
+  geom_line(aes(x = sale_price.x, color = 'sale_price.x')) + 
+  geom_line(aes(x = ASSESSEDVALUE, color = 'ASSESSEDVALUE')) + 
+  geom_line(aes(x = sale_year, color = 'sale_year')) + 
+  geom_line(aes(x = TAXABLEVALUE, color = 'TAXABLEVALUE')) + 
+  labs(y = 'foreclosure', x = 'covariates')
+```
+Create a lasso regression model including all numeric possible parameters
+Try to find a "best" model
+```{r}
+# Create a lasso regression model including all numeric possible parameters
+# Try to find a "best" model
+Model_Sale_2<-lm(sale_price.x~ASSESSEDVALUE+sale_year+TAXABLEVALUE+foreclosure+total_square_footage+total_floor_area+year_built,
+                 data=Sale_Merged)
+summary(Model_Sale_2)
+# R-squared is not good
+```
 
+```{r}
+Sale_Merged_noNA <- Sale_Merged %>%
+  select(sale_price.x, ASSESSEDVALUE, sale_year, 
+         TAXABLEVALUE, foreclosure, total_square_footage, 
+         total_floor_area, year_built) %>%
+  drop_na()
+
+y <- Sale_Merged_noNA$sale_price.x
+
+x <- data.matrix(Sale_Merged_noNA[, c('ASSESSEDVALUE', 
+                                      'TAXABLEVALUE',
+                                      'total_square_footage', 
+                                      'total_floor_area', 
+                                      'sale_year', 
+                                      'year_built')])
+library(glmnet)
+cv_model <- cv.glmnet(x, y, alpha = 1)
+```
+find optimal lambda value that minimizes test MSE
+```{r}
+best_lambda <- cv_model$lambda.min
+best_lambda
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda)
+coef(best_model)
+
+```
 
 
