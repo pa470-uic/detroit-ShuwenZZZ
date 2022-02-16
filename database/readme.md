@@ -14,7 +14,7 @@ Five tables are provided:
 
 Built from numerous FOIA requests, this table includes information on assessments for residential properties from 2011 to 2021. 2022 tentative assessments are also included.
 
-### blight
+### blight 
 
 See: https://data.detroitmi.gov/datasets/blight-violations/explore
 
